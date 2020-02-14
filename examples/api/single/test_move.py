@@ -41,5 +41,5 @@ print(swift.set_polar(stretch=200, rotation=90, height=150, wait=True))
 
 swift.flush_cmd()
 
-time.sleep(60)
+time.sleep(6)
 swift.disconnect()

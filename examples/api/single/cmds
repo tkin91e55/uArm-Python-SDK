@@ -1,0 +1,55 @@
+import os, sys, time
+sys.path.append(os.path.join('../../..'))
+from uarm.wrapper import SwiftAPI
+from uarm.swift.protocol import SERVO_BOTTOM, SERVO_LEFT, SERVO_RIGHT, SERVO_HAND
+swift = SwiftAPI(filters={'hwid': 'USB VID:PID=2341:0042'})
+swift.waiting_ready()
+print(swift.set_servo_detach(servo_id=SERVO_BOTTOM))
+
+print(swift.get_position())
+swift.get_servo_angle()
+
+swift.set_servo_detach()
+print(swift.set_servo_attach())
+swift.set_polar(stretch=125,rotation=0,height=50.66,speed=100000)
+swift.set_polar(stretch=330,rotation=90,height=45.66,speed=1000000)
+
+#1. middle back low
+swift.set_position(x=150,y=0,z=22, speed=1000000)
+#2. middle back high 
+swift.set_position(x=150,y=0,z=150, speed=1000000)
+#3. left back high 
+swift.set_position(x=150,y=155,z=150, speed=1000000)
+#4. left back low 
+swift.set_position(x=150,y=155,z=22, speed=1000000)
+#5. left front high 
+swift.set_position(x=220,y=155,z=150, speed=1000000)
+#6. left front low 
+swift.set_position(x=220,y=155,z=22, speed=1000000)
+#7. middle front high 
+swift.set_position(x=220,y=0,z=150, speed=1000000)
+#8. middle front low 
+swift.set_position(x=220,y=0,z=22, speed=1000000)
+#9. right front high 
+swift.set_position(x=220,y=-155,z=150,speed=1000000)
+#10. right front low 
+swift.set_position(x=220,y=-155,z=22,speed=1000000)
+#11. right back high 
+swift.set_position(x=150,y=-155,z=150,speed=1000000)
+#12. middle front low 
+swift.set_position(x=150,y=-155,z=22,speed=1000000)
+
+swift.set_pump(on=True)
+swift.set_servo_angle(servo_id=SERVO_BOTTOM,angle=90,speed=1000000)
+swift.reset(wait=True,speed=1000000)
+
+
+#position cb
+def pos_callback(ret):
+    print('report pos: {}, time: {}'.format(ret, time.time()))
+swift.register_report_position_callback(callback=pos_callback)
+swift.set_report_position(interval=2)
+#to turn off
+swift.set_report_position(interval=0)
+
+swift.disconnect()
