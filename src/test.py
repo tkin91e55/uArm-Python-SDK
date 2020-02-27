@@ -1,6 +1,5 @@
 import sys
 import zmq
-import json
 
 context = zmq.Context()
 socket = context.socket(zmq.SUB)
@@ -8,11 +7,15 @@ socket.connect("tcp://localhost:5556")
 socket.setsockopt_string(zmq.SUBSCRIBE, "0")
 
 shouldRun=True
+import json
 def PollSocket():
     while shouldRun:
-        print(shouldRun)
-        jsObj = socket.recv_string()
-        print(jsObj)
+        jsTxt = socket.recv_string()
+        try:
+            jsObj=json.loads(jsTxt.lstrip("0 "))
+            print(jsObj["handType"])
+        except:
+        	pass
 
 import threading
 
@@ -26,7 +29,7 @@ def main():
         global shouldRun
         sys.stdin.readline()
         shouldRun = False
-        print("shouldRun False...")
+        runner.stop()
     except KeyboardInterrupt:
         pass
     finally:
