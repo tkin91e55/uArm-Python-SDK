@@ -5,4 +5,6 @@ files__pycache__/
 build/
 dist/
 *.egg-info/
-examples/debug/
+examples/debug/.DS_Store
+*.DS_Store
+venv/
