@@ -1,7 +1,3 @@
-import sys, os
-sys.path.append(os.path.join('..'))
-from uarm.wrapper import SwiftAPI
-from uarm.swift.protocol import SERVO_BOTTOM, SERVO_LEFT, SERVO_RIGHT, SERVO_HAND
 import zmq
 import zmq.utils.jsonapi as zmqJson
 
@@ -28,13 +24,72 @@ class LeapMotionPoller():
                 #print(jsTxt)
                 jsObj=zmqJson.loads(jsTxt.lstrip(LeapMotionPoller.sub_channel))
                 print(jsObj["handType"])
+                return jsObj
+        except:
+            return None
+            pass
+        return None
+
+import sys, os
+sys.path.append(os.path.join('..'))
+from uarm.wrapper import SwiftAPI
+from uarm.swift.protocol import SERVO_BOTTOM, SERVO_LEFT, SERVO_RIGHT, SERVO_HAND
+class UarmActuator():
+
+    X_MIN, X_MAX=150,220
+    Y_MIN, Y_MAX=-155,155
+    Z_MIN, Z_MAX=22,150
+
+    def __init__(self):
+        try:
+            self.uArm = SwiftAPI(filters={'hwid': 'USB VID:PID=2341:0042'})
+            self.uArm.waiting_ready()
+            self.uArm.reset()
+
+            self.jsonTrack=[]
         except:
             pass
-    
-class UarmActuator():
-    pass
 
+    def connect(self):
+        try:
+            self.uArm = SwiftAPI(filters={'hwid': 'USB VID:PID=2341:0042'})
+            self.uArm.waiting_ready()
+            self.uArm.reset()
+        except:
+            pass
 
+    def disconnect(self):
+
+        try:
+            self.uArm.set_position(x=150,y=0,z=22, speed=1000000)
+            self.uArm.set_servo_detach()
+            self.uArm.disconnect()
+        except:
+            pass
+        finally:
+            pass
+
+    def register_callback(self,period):
+        self.uArm.register_report_position_callback(callback=self.pos_callback)
+        self.uArm.set_report_position(interval=period)
+
+    def deregister_callback(self):
+        self.uArm.set_report_position(0)
+
+    def pos_callback(self,ret):
+        print('report pos: {}, time: {}'.format(ret, time.time()))
+        #TODO check json
+
+    def onLeapMotionUpdate(self,aJson):
+        if aJson is not None:
+            print("[onLeapMotionUpdate] json: %s" % aJson)
+            #TODO keep track of json
+        #
+        return
+
+    def mapper(self):
+        #clipping the input
+        return
 
 shouldRun=True
 
@@ -46,7 +101,6 @@ import threading
 
 def main():
 
-    swiftArm = SwiftAPI(filters={'hwid': 'USB VID:PID=2341:0042'})
     poller = LeapMotionPoller()
     runner = threading.Thread(target = PollSocket, args=(poller,))
     runner.start()
@@ -65,9 +119,6 @@ def main():
         poller.socket.disconnect("tcp://192.168.8.103:5556")
         context.destroy()
 
-        swiftArm.set_position(x=150,y=0,z=22, speed=1000000)
-        swiftArm.set_servo_detach()
-        swiftArm.disconnect()
     return
 
 if __name__ == "__main__":
