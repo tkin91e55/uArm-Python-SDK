@@ -83,26 +83,35 @@ class UarmActuator():
     def onLeapMotionUpdate(self,aJson):
         if aJson is not None:
             print("[onLeapMotionUpdate] json: %s" % aJson)
-            #TODO keep track of json
-        #
+            self.jsonTrack.append(resultJson)
+            if len(self.jsonTrack) > 100
+                self.jsonTrack.remove(self.actuator.jsonTrack[0])
         return
 
     def mapper(self):
         #clipping the input
+        #using relative unit span for comparison
+        #if distance is large than 0.05, the drive the motor to the target point
+        #leapmotion: (position_x,position_y,position_z) ~ uarm: (^y,z,^x)
+        #leapmotion: clip([-150,150],[80,250],[-50,150])
         return
 
 shouldRun=True
 
-def PollSocket(poller):
+def PollSocket(poller,actuator):
     while shouldRun:
-        poller.Poll()
+        resultJson=poller.Poll()
+        if resultJson is not None:
+            actuator.onLeapMotionUpdate(resultJson)
 
 import threading
 
 def main():
 
     poller = LeapMotionPoller()
-    runner = threading.Thread(target = PollSocket, args=(poller,))
+    actuator = UarmActuator()
+    actuator.connect()
+    runner = threading.Thread(target = PollSocket, args=(poller,actuator))
     runner.start()
 
     # Keep this process running until Enter is pressed
@@ -116,6 +125,7 @@ def main():
     finally:
         runner.join()
         print("Client disconnecting...")
+        actuator.disconnect()
         poller.socket.disconnect("tcp://192.168.8.103:5556")
         context.destroy()
 
