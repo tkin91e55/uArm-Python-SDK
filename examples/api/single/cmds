@@ -3,6 +3,8 @@ sys.path.append(os.path.join('../../..'))
 from uarm.wrapper import SwiftAPI
 from uarm.swift.protocol import SERVO_BOTTOM, SERVO_LEFT, SERVO_RIGHT, SERVO_HAND
 swift = SwiftAPI(filters={'hwid': 'USB VID:PID=2341:0042'})
+#for opensuse: https://stackoverflow.com/questions/27858041/oserror-errno-13-permission-denied-dev-ttyacm0-using-pyserial-from-pyth
+#sudo chmod 666 /dev/ttyACM0
 swift.waiting_ready()
 print(swift.set_servo_detach(servo_id=SERVO_BOTTOM))
 
@@ -37,7 +39,7 @@ swift.set_position(x=220,y=-155,z=22,speed=1000000)
 #11. right back high 
 swift.set_position(x=150,y=-155,z=150,speed=1000000)
 #12. middle front low 
-swift.set_position(x=150,y=-155,z=22,speed=1000000)
+swift.set_position(x=150,y=0,z=22,speed=1000000)
 
 swift.set_pump(on=True)
 swift.set_servo_angle(servo_id=SERVO_BOTTOM,angle=90,speed=1000000)

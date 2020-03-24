@@ -1,22 +1,29 @@
 import sys
 import zmq
+import zmq.utils.jsonapi as zmqJson
 
 context = zmq.Context()
 socket = context.socket(zmq.SUB)
 socket.connect("tcp://localhost:5556")
 socket.setsockopt_string(zmq.SUBSCRIBE, "0")
 
+poller = zmq.Poller()
+poller.register(socket, zmq.POLLIN)
+
 shouldRun=True
 import json
 def PollSocket():
     while shouldRun:
-        jsTxt = socket.recv_string()
         try:
-            jsObj=json.loads(jsTxt.lstrip("0 "))
-            print(jsObj["handType"])
+            polledSockets = dict(poller.poll(timeout=500))
+            if socket in polledSockets and polledSockets[socket] == zmq.POLLIN:
+                jsTxt = socket.recv_string(zmq.DONTWAIT)
+                #print(jsTxt)
+                jsObj=zmqJson.loads(jsTxt.lstrip("0 "))
+                print(jsObj["handType"])
         except:
-        	pass
-
+            pass
+         
 import threading
 
 def main():
@@ -29,7 +36,6 @@ def main():
         global shouldRun
         sys.stdin.readline()
         shouldRun = False
-        runner.stop()
     except KeyboardInterrupt:
         pass
     finally:
