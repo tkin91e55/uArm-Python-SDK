@@ -23,7 +23,7 @@ class LeapMotionPoller():
                 jsTxt = self.socket.recv_string(zmq.DONTWAIT)
                 #print(jsTxt)
                 jsObj=zmqJson.loads(jsTxt.lstrip(LeapMotionPoller.sub_channel))
-                print(jsObj["handType"])
+                #print(jsObj["handType"])
                 return jsObj
         except:
             return None
@@ -36,9 +36,10 @@ from uarm.wrapper import SwiftAPI
 from uarm.swift.protocol import SERVO_BOTTOM, SERVO_LEFT, SERVO_RIGHT, SERVO_HAND
 class UarmActuator():
 
-    X_MIN, X_MAX=150,220
-    Y_MIN, Y_MAX=-155,155
-    Z_MIN, Z_MAX=22,150
+    uArm_MIN_XYZ=[150,-155,22]
+    uArm_MAX_XYZ=[220,155,150]
+    lp_MIN_XYZ=[-150,80,-50]
+    lp_MAX_XYZ=[150,250,150]
 
     def __init__(self):
         try:
@@ -48,20 +49,26 @@ class UarmActuator():
 
             self.jsonTrack=[]
         except:
-            pass
+            print("[Error] UarmActuator failed to init, check Power and connection")
+            raise
 
     def connect(self):
         try:
             self.uArm = SwiftAPI(filters={'hwid': 'USB VID:PID=2341:0042'})
             self.uArm.waiting_ready()
             self.uArm.reset()
+            self.uArm.register_callback(period=2)
         except:
             pass
 
     def disconnect(self):
 
         try:
+            self.deregister_callback()
             self.uArm.set_position(x=150,y=0,z=22, speed=1000000)
+            #kludge to fix the async cmd, may consider to use the set_position callback
+            import time
+            time.sleep(2)
             self.uArm.set_servo_detach()
             self.uArm.disconnect()
         except:
@@ -77,16 +84,36 @@ class UarmActuator():
         self.uArm.set_report_position(0)
 
     def pos_callback(self,ret):
-        print('report pos: {}, time: {}'.format(ret, time.time()))
+        print('report pos: {}, time: {}'.format(ret[:3], time.time()))
+        uarm_unclamped_coor = ret[:3]
+        uarm_clampped_coor = UarmActuator.XYZclamping(uarm_unclamped_coor,UarmActuator.uArm_MIN_XYZ,UarmActuator.uArm_MAX_XYZ)
+        print('uarm_unclamped_coor: {}, uarm_clampped_coor: {}'.format(uarm_unclamped_coor,uarm_clampped_coor))
+
+        self.uarm_cur_pos=UarmActuator.toRelativePos(uarm_clampped_coor,UarmActuator.uArm_MIN_XYZ,UarmActuator.uArm_MAX_XYZ)
+        print('uarm_cur_pos: {}'.format(uarm_cur_pos))
+
         #TODO check json
 
     def onLeapMotionUpdate(self,aJson):
         if aJson is not None:
-            print("[onLeapMotionUpdate] json: %s" % aJson)
-            self.jsonTrack.append(resultJson)
-            if len(self.jsonTrack) > 100
-                self.jsonTrack.remove(self.actuator.jsonTrack[0])
+            #print("[onLeapMotionUpdate] json: %s" % aJson)
+            self.jsonTrack.append(aJson)
+            if len(self.jsonTrack) > 100:
+                self.jsonTrack.remove(self.jsonTrack[0])
         return
+
+    @staticmethod
+    def clamping(num,aMin,aMax):
+        return min(aMax,max(num,aMin))
+
+    @staticmethod
+    def XYZclamping(V,mins,maxes):
+        return [UarmActuator.clamping(V[i],mins[i],UarmActuator.maxes[i]) for i in [0,1,2]]
+
+    @staticmethod
+    def toRelativePos(cur,mins,maxes):
+        toPercent = lambda cur, min, max: (cur-min)/(max-min)
+        return list(map(toPercent,cur,mins,maxes))
 
     def mapper(self):
         #clipping the input
@@ -94,6 +121,15 @@ class UarmActuator():
         #if distance is large than 0.05, the drive the motor to the target point
         #leapmotion: (position_x,position_y,position_z) ~ uarm: (^y,z,^x)
         #leapmotion: clip([-150,150],[80,250],[-50,150])
+        uarm_clipped_xyz = None
+        try:
+            pass
+        except:
+            print("[Exception] some error")
+            pass
+
+
+        
         return
 
 shouldRun=True
@@ -109,8 +145,13 @@ import threading
 def main():
 
     poller = LeapMotionPoller()
-    actuator = UarmActuator()
-    actuator.connect()
+    actuator = None
+    try:
+        actuator = UarmActuator()
+        actuator.connect()
+    except:
+        print("[Error] actuator some error, stopped")
+        raise
     runner = threading.Thread(target = PollSocket, args=(poller,actuator))
     runner.start()
 
