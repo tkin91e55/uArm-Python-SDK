@@ -31,6 +31,7 @@ class LeapMotionPoller():
         return None
 
 import sys, os
+import threading
 sys.path.append(os.path.join('..'))
 from uarm.wrapper import SwiftAPI
 from uarm.swift.protocol import SERVO_BOTTOM, SERVO_LEFT, SERVO_RIGHT, SERVO_HAND
@@ -43,11 +44,15 @@ class UarmActuator():
 
     def __init__(self):
         try:
-            self.uArm = SwiftAPI(filters={'hwid': 'USB VID:PID=2341:0042'})
-            self.uArm.waiting_ready()
-            self.uArm.reset()
-
             self.jsonTrack=[]
+            self.cur_hand_type=None
+            self.cur_hand_id=None
+
+            #for testing only, tmp
+            self.isMoving=False
+
+            self.worker=None
+            self.working=False
         except:
             print("[Error] UarmActuator failed to init, check Power and connection")
             raise
@@ -56,24 +61,30 @@ class UarmActuator():
         try:
             self.uArm = SwiftAPI(filters={'hwid': 'USB VID:PID=2341:0042'})
             self.uArm.waiting_ready()
-            self.uArm.reset()
-            self.uArm.register_callback(period=2)
+            self.uArm.reset(wait=True,speed=1000000)
+            self.uArm.waiting_ready()
+            #if setting the period=0.02 would cost the client slow
+            #self.register_callback(period=0.1)
         except:
             pass
 
     def disconnect(self):
 
         try:
-            self.deregister_callback()
+            self.working=False
+            self.worker.join()
+
+        except Exception as e:
+            print("[Error] disconnect error: {}".format(e))
+            pass
+        finally:
+            #self.deregister_callback()
             self.uArm.set_position(x=150,y=0,z=22, speed=1000000)
             #kludge to fix the async cmd, may consider to use the set_position callback
             import time
             time.sleep(2)
             self.uArm.set_servo_detach()
             self.uArm.disconnect()
-        except:
-            pass
-        finally:
             pass
 
     def register_callback(self,period):
@@ -81,26 +92,83 @@ class UarmActuator():
         self.uArm.set_report_position(interval=period)
 
     def deregister_callback(self):
-        self.uArm.set_report_position(0)
+        self.uArm.set_report_position(interval=0)
+        self.uArm.release_report_position_callback()
 
     def pos_callback(self,ret):
-        print('report pos: {}, time: {}'.format(ret[:3], time.time()))
         uarm_unclamped_coor = ret[:3]
         uarm_clampped_coor = UarmActuator.XYZclamping(uarm_unclamped_coor,UarmActuator.uArm_MIN_XYZ,UarmActuator.uArm_MAX_XYZ)
-        print('uarm_unclamped_coor: {}, uarm_clampped_coor: {}'.format(uarm_unclamped_coor,uarm_clampped_coor))
+        #print('uarm_unclamped_coor: {}, uarm_clampped_coor: {}'.format(uarm_unclamped_coor,uarm_clampped_coor))
 
         self.uarm_cur_pos=UarmActuator.toRelativePos(uarm_clampped_coor,UarmActuator.uArm_MIN_XYZ,UarmActuator.uArm_MAX_XYZ)
-        print('uarm_cur_pos: {}'.format(uarm_cur_pos))
+        #print ("uarm_cur_pos: "+str(["{0:0.2f}".format(i) for i in self.uarm_cur_pos]))
 
         #TODO check json
 
+    #def pos_callback(ret):
+    #    print('report pos: {}'.format(ret))
+
     def onLeapMotionUpdate(self,aJson):
+        #TODO if a new hand get in, ignore it
+        #TODO if no LP input a while, detach motor and wait for in to attach again
         if aJson is not None:
             #print("[onLeapMotionUpdate] json: %s" % aJson)
+
             self.jsonTrack.append(aJson)
             if len(self.jsonTrack) > 100:
                 self.jsonTrack.remove(self.jsonTrack[0])
+        try:
+            self.cur_json = self.jsonTrack[0]
+            #self.jsonTrack.pop(0)
+            self.jsonTrack.clear()
+            
+            #TODO something to do for hand keep tracking
+            self.cur_hand_type=self.cur_json["handType"]
+            self.cur_hand_id=int(self.cur_json["id"])
+            self.cur_target_pos=None
+            lp_unclamped_coor=[float(self.cur_json["position_x"]),
+                                float(self.cur_json["position_y"]),
+                                float(self.cur_json["position_z"])]
+            lp_clampped_coor=UarmActuator.XYZclamping(lp_unclamped_coor,UarmActuator.lp_MIN_XYZ,UarmActuator.lp_MAX_XYZ)
+            #print('lp_unclamped_coor: {}, lp_clampped_coor: {}'.format(lp_unclamped_coor,lp_clampped_coor))
+            self.cur_target_pos=UarmActuator.toRelativePos(lp_clampped_coor,UarmActuator.lp_MIN_XYZ,UarmActuator.lp_MAX_XYZ)
+            #print('cur_target_pos: {}'.format(self.cur_target_pos))
+            #remap the directions for the uArm
+            buffer_vec = self.cur_target_pos
+            self.cur_target_pos=[1.0-buffer_vec[2],1.0-buffer_vec[0],buffer_vec[1]]
+            #print (["{0:0.2f}".format(i) for i in self.cur_target_pos])
+            inversion_pos=[ a+(b-a)*c for a,b,c in zip(UarmActuator.uArm_MIN_XYZ,
+                                                        UarmActuator.uArm_MAX_XYZ,
+                                                        self.cur_target_pos)]
+            self.posTrack=[]
+            self.posTrack.append(inversion_pos)
+
+            print("inversion_pos for uarm: " + str(["{0:0.2f}".format(i) for i in inversion_pos]))
+
+            if self.isMoving is False:
+                #self.uArm.set_position(x=inversion_pos[0],y=inversion_pos[1],z=inversion_pos[2])
+                self.working=True
+                self.worker = threading.Thread(target=self.workingFunc)
+                self.worker.start()
+                self.isMoving=True
+
+            print("should end")
+
+        except Exception as e:
+            print("[Error] some exception for jsonTrack?: {}".format(e))
+
         return
+
+    def workingFunc(self):
+        while self.working:
+            if self.uArm.get_is_moving() is False:
+                try:
+                    if len(self.posTrack)>0:
+                        xyz=self.posTrack.pop(0)
+                        self.uArm.set_position(x=xyz[0],y=xyz[1],z=xyz[2])
+                except Exception as e:
+                    print("[Working error] e: {}".format(e))
+
 
     @staticmethod
     def clamping(num,aMin,aMax):
@@ -108,7 +176,7 @@ class UarmActuator():
 
     @staticmethod
     def XYZclamping(V,mins,maxes):
-        return [UarmActuator.clamping(V[i],mins[i],UarmActuator.maxes[i]) for i in [0,1,2]]
+        return [UarmActuator.clamping(V[i],mins[i],maxes[i]) for i in [0,1,2]]
 
     @staticmethod
     def toRelativePos(cur,mins,maxes):
@@ -139,8 +207,6 @@ def PollSocket(poller,actuator):
         resultJson=poller.Poll()
         if resultJson is not None:
             actuator.onLeapMotionUpdate(resultJson)
-
-import threading
 
 def main():
 
