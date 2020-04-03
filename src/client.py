@@ -45,14 +45,14 @@ class UarmActuator():
     def __init__(self):
         try:
             self.jsonTrack=[]
+            self.posTrack=[]
             self.cur_hand_type=None
             self.cur_hand_id=None
 
-            #for testing only, tmp
-            self.isMoving=False
-
             self.worker=None
             self.working=False
+            self.actPosTrack =[]
+            self.isMoving=False
         except:
             print("[Error] UarmActuator failed to init, check Power and connection")
             raise
@@ -64,7 +64,7 @@ class UarmActuator():
             self.uArm.reset(wait=True,speed=1000000)
             self.uArm.waiting_ready()
             #if setting the period=0.02 would cost the client slow
-            #self.register_callback(period=0.1)
+            self.register_callback(period=0.1)
         except:
             pass
 
@@ -78,7 +78,7 @@ class UarmActuator():
             print("[Error] disconnect error: {}".format(e))
             pass
         finally:
-            #self.deregister_callback()
+            self.deregister_callback()
             self.uArm.set_position(x=150,y=0,z=22, speed=1000000)
             #kludge to fix the async cmd, may consider to use the set_position callback
             import time
@@ -99,11 +99,26 @@ class UarmActuator():
         uarm_unclamped_coor = ret[:3]
         uarm_clampped_coor = UarmActuator.XYZclamping(uarm_unclamped_coor,UarmActuator.uArm_MIN_XYZ,UarmActuator.uArm_MAX_XYZ)
         #print('uarm_unclamped_coor: {}, uarm_clampped_coor: {}'.format(uarm_unclamped_coor,uarm_clampped_coor))
+        uarm_cur_pos=UarmActuator.toRelativePos(uarm_clampped_coor,UarmActuator.uArm_MIN_XYZ,UarmActuator.uArm_MAX_XYZ)
+        #print ("uarm_cur_pos: "+str(["{0:0.2f}".format(i) for i in uarm_cur_pos]))
 
-        self.uarm_cur_pos=UarmActuator.toRelativePos(uarm_clampped_coor,UarmActuator.uArm_MIN_XYZ,UarmActuator.uArm_MAX_XYZ)
-        #print ("uarm_cur_pos: "+str(["{0:0.2f}".format(i) for i in self.uarm_cur_pos]))
-
-        #TODO check json
+        posTrackLength=len(self.posTrack)
+        if posTrackLength > 0 and not self.isMoving:
+            #if not self.uArm.get_is_moving():
+            try:
+                lastPosFromLP = self.posTrack[-1]
+                #print ("uarm_cur_pos: "+str(["{0:0.2f}".format(i) for i in uarm_cur_pos]))
+                #print ("lastPosFromLP: "+str(["{0:0.2f}".format(i) for i in lastPosFromLP]))
+                dist = UarmActuator.dist(uarm_cur_pos,lastPosFromLP)
+                print("dist 1: {}".format(dist))
+                if dist >= 0.1:
+                    #tmp
+                    self.timeoutSet= int(dist*10)
+                    print("timeout: {}".format(self.timeoutSet))
+                    self.actPosTrack.append(lastPosFromLP)
+                    self.posTrack.clear()
+            except Exception as e:
+                print("[Error] e: {}".format(e))
 
     #def pos_callback(ret):
     #    print('report pos: {}'.format(ret))
@@ -114,45 +129,50 @@ class UarmActuator():
         if aJson is not None:
             #print("[onLeapMotionUpdate] json: %s" % aJson)
 
-            self.jsonTrack.append(aJson)
-            if len(self.jsonTrack) > 100:
-                self.jsonTrack.remove(self.jsonTrack[0])
-        try:
-            self.cur_json = self.jsonTrack[0]
-            #self.jsonTrack.pop(0)
-            self.jsonTrack.clear()
-            
             #TODO something to do for hand keep tracking
-            self.cur_hand_type=self.cur_json["handType"]
-            self.cur_hand_id=int(self.cur_json["id"])
-            self.cur_target_pos=None
-            lp_unclamped_coor=[float(self.cur_json["position_x"]),
-                                float(self.cur_json["position_y"]),
-                                float(self.cur_json["position_z"])]
-            lp_clampped_coor=UarmActuator.XYZclamping(lp_unclamped_coor,UarmActuator.lp_MIN_XYZ,UarmActuator.lp_MAX_XYZ)
-            #print('lp_unclamped_coor: {}, lp_clampped_coor: {}'.format(lp_unclamped_coor,lp_clampped_coor))
-            self.cur_target_pos=UarmActuator.toRelativePos(lp_clampped_coor,UarmActuator.lp_MIN_XYZ,UarmActuator.lp_MAX_XYZ)
-            #print('cur_target_pos: {}'.format(self.cur_target_pos))
+            #self.cur_hand_type=aJson["handType"]
+            #self.cur_hand_id=int(aJson["id"])
+            
+            if len(self.jsonTrack)>0:
+                #do distance checking, filter out dist<0.05 in relative scale: (0-1,0-1,0-1)
+                last_json=self.jsonTrack[-1]
+
+                last_rel_pos=UarmActuator.extractLPposFromJson(last_json)
+                new_rel_pos=UarmActuator.extractLPposFromJson(aJson)
+
+                dist = UarmActuator.dist(last_rel_pos,new_rel_pos)
+                #print("dist 2: {}".format(dist))
+
+                if dist>0.05:
+                    self.jsonTrack.append(aJson)
+                    if len(self.jsonTrack) > 100:
+                        self.jsonTrack.pop(0)
+                else:
+                    return
+            else:
+                self.jsonTrack.append(aJson)
+
+        #start from here the hand tracking done
+        try:
+            #TODO should be done on the position report callback to convert a json into arm_pos_track
+            if len(self.jsonTrack) is 0:
+                return
+
+            cur_json = self.jsonTrack[-1]
+            
+            cur_target_pos=UarmActuator.extractLPposFromJson(cur_json)
             #remap the directions for the uArm
-            buffer_vec = self.cur_target_pos
-            self.cur_target_pos=[1.0-buffer_vec[2],1.0-buffer_vec[0],buffer_vec[1]]
-            #print (["{0:0.2f}".format(i) for i in self.cur_target_pos])
-            inversion_pos=[ a+(b-a)*c for a,b,c in zip(UarmActuator.uArm_MIN_XYZ,
-                                                        UarmActuator.uArm_MAX_XYZ,
-                                                        self.cur_target_pos)]
-            self.posTrack=[]
-            self.posTrack.append(inversion_pos)
+            buffer_vec = cur_target_pos
+            cur_target_pos=[1.0-buffer_vec[2],1.0-buffer_vec[0],buffer_vec[1]]
+            #print (["{0:0.2f}".format(i) for i in cur_target_pos])
+            self.posTrack.append(cur_target_pos)
 
-            print("inversion_pos for uarm: " + str(["{0:0.2f}".format(i) for i in inversion_pos]))
+            #print("uarm_pos for uarm: " + str(["{0:0.2f}".format(i) for i in uarm_pos]))
 
-            if self.isMoving is False:
-                #self.uArm.set_position(x=inversion_pos[0],y=inversion_pos[1],z=inversion_pos[2])
+            if self.working is False:
                 self.working=True
                 self.worker = threading.Thread(target=self.workingFunc)
                 self.worker.start()
-                self.isMoving=True
-
-            print("should end")
 
         except Exception as e:
             print("[Error] some exception for jsonTrack?: {}".format(e))
@@ -161,13 +181,25 @@ class UarmActuator():
 
     def workingFunc(self):
         while self.working:
-            if self.uArm.get_is_moving() is False:
-                try:
-                    if len(self.posTrack)>0:
-                        xyz=self.posTrack.pop(0)
-                        self.uArm.set_position(x=xyz[0],y=xyz[1],z=xyz[2])
-                except Exception as e:
-                    print("[Working error] e: {}".format(e))
+            try:
+                #if len(self.posTrack)>0:
+                    #xyz=self.posTrack.pop(0)
+                    #self.uArm.set_position(x=xyz[0],y=xyz[1],z=xyz[2])
+                if len(self.actPosTrack) > 0:
+                    self.isMoving=True
+                    for pos in self.actPosTrack:
+                        uarm_pos=[ a+(b-a)*c for a,b,c in zip(UarmActuator.uArm_MIN_XYZ,
+                            UarmActuator.uArm_MAX_XYZ,
+                            pos)]
+                        print("exert")
+                        self.uArm.set_position(x=uarm_pos[0],y=uarm_pos[1],z=uarm_pos[2],timeout=(0.1*self.timeoutSet),speed=1000000)
+                        print("exert2")
+                    self.uArm.flush_cmd()
+                    self.actPosTrack.clear()
+                    self.isMoving=False
+                pass
+            except Exception as e:
+                print("[Working error] e: {}".format(e))
 
 
     @staticmethod
@@ -183,22 +215,21 @@ class UarmActuator():
         toPercent = lambda cur, min, max: (cur-min)/(max-min)
         return list(map(toPercent,cur,mins,maxes))
 
-    def mapper(self):
-        #clipping the input
-        #using relative unit span for comparison
-        #if distance is large than 0.05, the drive the motor to the target point
-        #leapmotion: (position_x,position_y,position_z) ~ uarm: (^y,z,^x)
-        #leapmotion: clip([-150,150],[80,250],[-50,150])
-        uarm_clipped_xyz = None
-        try:
-            pass
-        except:
-            print("[Exception] some error")
-            pass
+    @staticmethod
+    def dist(relativePos1,relativePos2):
+        from math import sqrt
+        diffSqr = lambda a, b: pow((a-b),2)
+        sqrs = list(map(diffSqr,relativePos1,relativePos2))
+        return sqrt(sum(sqrs))
 
+    @staticmethod
+    def extractLPposFromJson(aJson):
+        json_coor=[float(aJson["position_x"]),
+                    float(aJson["position_y"]),
+                    float(aJson["position_z"])]
+        clampped_coor=UarmActuator.XYZclamping(json_coor,UarmActuator.lp_MIN_XYZ,UarmActuator.lp_MAX_XYZ)
+        return UarmActuator.toRelativePos(clampped_coor,UarmActuator.lp_MIN_XYZ,UarmActuator.lp_MAX_XYZ)
 
-        
-        return
 
 shouldRun=True
 
