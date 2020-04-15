@@ -50,9 +50,13 @@ class UarmActuator():
             self.cur_hand_id=None
 
             self.worker=None
+            #working(bool): tell the worker thread alive
             self.working=False
             self.actPosTrack =[]
+            #isMoving(bool): read by client, set by robot arm
             self.isMoving=False
+            self.isSuction=False
+            self.shouldSuction=False
         except:
             print("[Error] UarmActuator failed to init, check Power and connection")
             raise
@@ -78,6 +82,7 @@ class UarmActuator():
             print("[Error] disconnect error: {}".format(e))
             pass
         finally:
+            self.uArm.set_pump(on=False)
             self.deregister_callback()
             self.uArm.set_position(x=150,y=0,z=22, speed=1000000)
             #kludge to fix the async cmd, may consider to use the set_position callback
@@ -110,13 +115,15 @@ class UarmActuator():
                 #print ("uarm_cur_pos: "+str(["{0:0.2f}".format(i) for i in uarm_cur_pos]))
                 #print ("lastPosFromLP: "+str(["{0:0.2f}".format(i) for i in lastPosFromLP]))
                 dist = UarmActuator.dist(uarm_cur_pos,lastPosFromLP)
-                print("dist 1: {}".format(dist))
+                #print("dist 1: {}".format(dist))
                 if dist >= 0.1:
                     #tmp
                     self.timeoutSet= int(dist*10)
-                    print("timeout: {}".format(self.timeoutSet))
+                    #print("timeout: {}".format(self.timeoutSet))
+                    #TODO here can have better algo for smoothier track
                     self.actPosTrack.append(lastPosFromLP)
                     self.posTrack.clear()
+
             except Exception as e:
                 print("[Error] e: {}".format(e))
 
@@ -132,6 +139,19 @@ class UarmActuator():
             #TODO something to do for hand keep tracking
             #self.cur_hand_type=aJson["handType"]
             #self.cur_hand_id=int(aJson["id"])
+
+            #dealing with suctioning
+            suction_val = aJson["grab_strength"]
+            if suction_val > 0.8:
+                self.shouldSuction = True
+            else:
+                self.shouldSuction = False
+            #print("[onLeapMotionUpdate] self.isSuction: {}, self.shouldSuction:{}".format(self.isSuction,self.shouldSuction))
+
+            if self.isSuction != self.shouldSuction:
+                self.uArm.set_pump(on=self.shouldSuction)
+                self.isSuction = self.shouldSuction
+                #print("suction set, self.shouldSuction: {}".format(self.shouldSuction))
             
             if len(self.jsonTrack)>0:
                 #do distance checking, filter out dist<0.05 in relative scale: (0-1,0-1,0-1)
@@ -154,7 +174,7 @@ class UarmActuator():
 
         #start from here the hand tracking done
         try:
-            #TODO should be done on the position report callback to convert a json into arm_pos_track
+
             if len(self.jsonTrack) is 0:
                 return
 
@@ -166,6 +186,7 @@ class UarmActuator():
             cur_target_pos=[1.0-buffer_vec[2],1.0-buffer_vec[0],buffer_vec[1]]
             #print (["{0:0.2f}".format(i) for i in cur_target_pos])
             self.posTrack.append(cur_target_pos)
+
 
             #print("uarm_pos for uarm: " + str(["{0:0.2f}".format(i) for i in uarm_pos]))
 
@@ -187,15 +208,18 @@ class UarmActuator():
                     #self.uArm.set_position(x=xyz[0],y=xyz[1],z=xyz[2])
                 if len(self.actPosTrack) > 0:
                     self.isMoving=True
+
                     for pos in self.actPosTrack:
                         uarm_pos=[ a+(b-a)*c for a,b,c in zip(UarmActuator.uArm_MIN_XYZ,
                             UarmActuator.uArm_MAX_XYZ,
                             pos)]
-                        print("exert")
-                        self.uArm.set_position(x=uarm_pos[0],y=uarm_pos[1],z=uarm_pos[2],timeout=(0.1*self.timeoutSet),speed=1000000)
-                        print("exert2")
+                        #self.uArm.set_position(x=uarm_pos[0],y=uarm_pos[1],z=uarm_pos[2],timeout=(0.1*self.timeoutSet),speed=1000000)
+                        self.uArm.set_position(x=uarm_pos[0],y=uarm_pos[1],z=uarm_pos[2],timeout=0.1,speed=1000000)
                     self.uArm.flush_cmd()
                     self.actPosTrack.clear()
+
+                    #kludge for falied suction:
+                    self.uArm.set_pump(on=self.isSuction,timeout=0.1)
                     self.isMoving=False
                 pass
             except Exception as e:
